@@ -5,7 +5,7 @@ ROS1 用の `sensor_msgs/Joy` ツール集です。
 含まれるノード:
 
 - `joy_overlay_visualizer.py`
-  - 既存の `Joy` トピックを透過オーバレイ表示，とパブリッシュも可能
+  - 既存の `Joy` トピックを透過オーバレイ表示，GUIからパブリッシュする機能もあり．
 
 - `virtual_joy_gui.py`
   - Joy デバイスが無いときに GUI から `Joy` を publish
@@ -36,6 +36,7 @@ roslaunch joy_overlay_tools joy_overlay_visualizer.launch joy_topic:=/joy
 - `Esc` で Edit モード終了
 - `Ctrl+C` で終了
 - 左ドラッグでウィンドウ移動
+- `クリックでPublish` がONのとき、overlay上の button / axis / stick を直接クリック・ドラッグして `Joy` を publish できます。
 
 ## 2. GUI で Joy を publish
 
