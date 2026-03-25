@@ -1,0 +1,14 @@
+<launch>
+  <arg name="joy_topic" default="/joy" />
+  <arg name="config_path" default="$(env HOME)/.ros/virtual_joy_gui.yaml" />
+  <arg name="num_buttons" default="12" />
+  <arg name="num_axes" default="8" />
+  <arg name="publish_rate" default="30.0" />
+  <node pkg="joy_overlay_tools" type="virtual_joy_gui.py" name="virtual_joy_gui" output="screen">
+    <param name="joy_topic" value="$(arg joy_topic)" />
+    <param name="config_path" value="$(arg config_path)" />
+    <param name="num_buttons" value="$(arg num_buttons)" />
+    <param name="num_axes" value="$(arg num_axes)" />
+    <param name="publish_rate" value="$(arg publish_rate)" />
+  </node>
+</launch>

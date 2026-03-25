@@ -1,0 +1,20 @@
+window:
+  x: 120
+  y: 120
+  width: 980
+  height: 720
+style:
+  font_family: "Noto Sans CJK JP"
+  font_size: 12
+  accent_color: "#3fd0ff"
+  button_idle: "#2b2f38"
+  button_pressed: "#3fd0ff"
+  panel_bg: "#1b1f26"
+  panel_2: "#232934"
+  text: "#edf2f7"
+  soft_text: "#aab4c0"
+layout:
+  left_stick_axes: [0, 1]
+  right_stick_axes: [3, 4]
+  left_trigger_axis: 2
+  right_trigger_axis: 5
