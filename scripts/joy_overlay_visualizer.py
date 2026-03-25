@@ -176,6 +176,18 @@ class RosJoyBridge(QtCore.QObject):
         self.joy_msg.emit(msg)
 
 
+class RosJoyPublisher(object):
+    def __init__(self, topic_name):
+        self.pub = rospy.Publisher(topic_name, Joy, queue_size=1)
+
+    def publish_state(self, joy_state):
+        msg = Joy()
+        msg.header.stamp = rospy.Time.now()
+        msg.axes = list(joy_state.axes)
+        msg.buttons = list(joy_state.buttons)
+        self.pub.publish(msg)
+
+
 class ColorButton(QtWidgets.QPushButton):
     color_changed = QtCore.pyqtSignal(str)
 
@@ -424,6 +436,7 @@ class ItemEditorPanel(QtWidgets.QWidget):
 
 class GlobalEditorPanel(QtWidgets.QWidget):
     changed = QtCore.pyqtSignal()
+    interaction_changed = QtCore.pyqtSignal()
 
     def __init__(self, config, parent=None):
         super().__init__(parent)
@@ -458,6 +471,11 @@ class GlobalEditorPanel(QtWidgets.QWidget):
         self.grid_btn.color_changed.connect(self.on_change)
         form.addRow("編集グリッド色", self.grid_btn)
 
+        self.publish_click_check = QtWidgets.QCheckBox()
+        self.publish_click_check.setChecked(bool(self.config.get("interaction", {}).get("publish_on_overlay_click", False)))
+        self.publish_click_check.toggled.connect(self.on_interaction_change)
+        form.addRow("クリックでPublish", self.publish_click_check)
+
     def on_change(self, *args):
         self.config["style"]["global_scale"] = self.scale_spin.value()
         self.config["style"]["font_size"] = self.font_spin.value()
@@ -465,6 +483,12 @@ class GlobalEditorPanel(QtWidgets.QWidget):
         self.config["style"]["colors"]["selection"] = self.sel_btn.color()
         self.config["style"]["colors"]["edit_grid"] = self.grid_btn.color()
         self.changed.emit()
+
+    def on_interaction_change(self, checked):
+        if "interaction" not in self.config:
+            self.config["interaction"] = {}
+        self.config["interaction"]["publish_on_overlay_click"] = bool(checked)
+        self.interaction_changed.emit()
 
 
 class EditDialog(QtWidgets.QDialog):
@@ -495,6 +519,7 @@ class EditDialog(QtWidgets.QDialog):
 
         self.global_panel = GlobalEditorPanel(self.cfg_mgr.config)
         self.global_panel.changed.connect(self.overlay.on_global_style_changed)
+        self.global_panel.interaction_changed.connect(self.overlay.request_repaint)
         root.addWidget(self.global_panel)
 
         root.addWidget(QtWidgets.QLabel("描画要素"))
@@ -641,16 +666,19 @@ class EditDialog(QtWidgets.QDialog):
 
 
 class OverlayWindow(QtWidgets.QWidget):
-    def __init__(self, cfg_mgr, joy_state):
+    def __init__(self, cfg_mgr, joy_state, joy_publisher=None):
         super().__init__()
         self.cfg_mgr = cfg_mgr
         self.config = cfg_mgr.config
         self.joy_state = joy_state
+        self.joy_publisher = joy_publisher
         self.selected_item = None
         self.dragging_item = None
         self.drag_offset_logical = QtCore.QPointF(0.0, 0.0)
         self.dragging_window = False
         self.window_drag_offset = QtCore.QPoint(0, 0)
+        self.active_overlay_control = None
+        self.active_overlay_kind = None
         self.edit_dialog = None
         self.edit_mode = False
 
@@ -772,6 +800,13 @@ class OverlayWindow(QtWidgets.QWidget):
     def on_config_saved(self):
         rospy.loginfo("Joy overlay config saved: %s", self.cfg_mgr.path)
 
+    def publish_click_mode_enabled(self):
+        return bool(self.config.get("interaction", {}).get("publish_on_overlay_click", False))
+
+    def publish_current_state(self):
+        if self.joy_publisher is not None:
+            self.joy_publisher.publish_state(self.joy_state)
+
     def close_editor(self, close_dialog=True):
         was_edit_mode = self.edit_mode
         self.edit_mode = False
@@ -793,6 +828,197 @@ class OverlayWindow(QtWidgets.QWidget):
         if self.edit_mode:
             self.close_editor(close_dialog=False)
 
+
+    def reset_overlay_control_value(self, item):
+        if item is None:
+            return False
+        changed = False
+        if item.get("type") == "axis_bar":
+            idx = int(item.get("index", 0))
+            if idx >= len(self.joy_state.axes):
+                self.joy_state.axes.extend([0.0] * (idx + 1 - len(self.joy_state.axes)))
+            if self.joy_state.axes[idx] != 0.0:
+                self.joy_state.axes[idx] = 0.0
+                changed = True
+        elif item.get("type") == "stick":
+            ax = int(item.get("axis_x", 0))
+            ay = int(item.get("axis_y", 1))
+            max_idx = max(ax, ay)
+            if max_idx >= len(self.joy_state.axes):
+                self.joy_state.axes.extend([0.0] * (max_idx + 1 - len(self.joy_state.axes)))
+            if self.joy_state.axes[ax] != 0.0 or self.joy_state.axes[ay] != 0.0:
+                self.joy_state.axes[ax] = 0.0
+                self.joy_state.axes[ay] = 0.0
+                changed = True
+        if changed:
+            self.publish_current_state()
+            self.update()
+        return changed
+
+    def handle_overlay_click_publish(self, logical_pos, button_name):
+        if self.edit_mode:
+            return False
+        if not self.publish_click_mode_enabled():
+            return False
+
+        item = self.hit_test(logical_pos)
+        if item is None:
+            return False
+
+        if item.get("type") == "button":
+            idx = int(item.get("index", 0))
+            if idx >= len(self.joy_state.buttons):
+                missing = idx + 1 - len(self.joy_state.buttons)
+                self.joy_state.buttons.extend([0] * missing)
+            if button_name == "left":
+                self.joy_state.buttons[idx] = 1
+                self.active_overlay_control = item
+                self.active_overlay_kind = "button"
+                self.publish_current_state()
+                self.update()
+                return True
+
+        elif item.get("type") == "axis_bar":
+            idx = int(item.get("index", 0))
+            if idx >= len(self.joy_state.axes):
+                missing = idx + 1 - len(self.joy_state.axes)
+                self.joy_state.axes.extend([0.0] * missing)
+            orientation = str(item.get("orientation", "horizontal")).lower()
+            x = float(item["x"])
+            y = float(item["y"])
+            w = float(item.get("width", 180))
+            h = float(item.get("height", 18))
+            if orientation == "vertical":
+                track_len = w
+                py = logical_pos.y()
+                if y <= py <= y + track_len:
+                    ratio = 1.0 - ((py - y) / max(1e-6, track_len))
+                    val = max(-1.0, min(1.0, (ratio - 0.5) * 2.0))
+                    self.joy_state.axes[idx] = float(val)
+                    self.active_overlay_control = item
+                    self.active_overlay_kind = "axis_bar"
+                    self.publish_current_state()
+                    self.update()
+                    return True
+            else:
+                track_len = w
+                px = logical_pos.x()
+                if x <= px <= x + track_len:
+                    ratio = (px - x) / max(1e-6, track_len)
+                    val = max(-1.0, min(1.0, (ratio - 0.5) * 2.0))
+                    self.joy_state.axes[idx] = float(val)
+                    self.active_overlay_control = item
+                    self.active_overlay_kind = "axis_bar"
+                    self.publish_current_state()
+                    self.update()
+                    return True
+
+        elif item.get("type") == "stick":
+            ax = int(item.get("axis_x", 0))
+            ay = int(item.get("axis_y", 1))
+            max_idx = max(ax, ay)
+            if max_idx >= len(self.joy_state.axes):
+                self.joy_state.axes.extend([0.0] * (max_idx + 1 - len(self.joy_state.axes)))
+            cx = float(item["x"])
+            cy = float(item["y"])
+            r = float(item.get("radius", 56))
+            dx = (logical_pos.x() - cx) / max(1e-6, r)
+            dy = (logical_pos.y() - cy) / max(1e-6, r)
+            mag = (dx * dx + dy * dy) ** 0.5
+            if mag > 1.0:
+                dx /= mag
+                dy /= mag
+            self.joy_state.axes[ax] = float(max(-1.0, min(1.0, dx)))
+            self.joy_state.axes[ay] = float(max(-1.0, min(1.0, -dy)))
+            self.active_overlay_control = item
+            self.active_overlay_kind = "stick"
+            self.publish_current_state()
+            self.update()
+            return True
+
+        return False
+
+    def continue_overlay_click_publish(self, logical_pos):
+        if self.edit_mode:
+            return False
+        if not self.publish_click_mode_enabled():
+            return False
+        item = self.active_overlay_control
+        if item is None:
+            return False
+
+        if item.get("type") == "axis_bar":
+            idx = int(item.get("index", 0))
+            orientation = str(item.get("orientation", "horizontal")).lower()
+            x = float(item["x"])
+            y = float(item["y"])
+            w = float(item.get("width", 180))
+            if idx >= len(self.joy_state.axes):
+                self.joy_state.axes.extend([0.0] * (idx + 1 - len(self.joy_state.axes)))
+            if orientation == "vertical":
+                track_len = w
+                py = min(max(logical_pos.y(), y), y + track_len)
+                ratio = 1.0 - ((py - y) / max(1e-6, track_len))
+                val = max(-1.0, min(1.0, (ratio - 0.5) * 2.0))
+            else:
+                track_len = w
+                px = min(max(logical_pos.x(), x), x + track_len)
+                ratio = (px - x) / max(1e-6, track_len)
+                val = max(-1.0, min(1.0, (ratio - 0.5) * 2.0))
+            self.joy_state.axes[idx] = float(val)
+            self.publish_current_state()
+            self.update()
+            return True
+
+        if item.get("type") == "stick":
+            ax = int(item.get("axis_x", 0))
+            ay = int(item.get("axis_y", 1))
+            cx = float(item["x"])
+            cy = float(item["y"])
+            r = float(item.get("radius", 56))
+            max_idx = max(ax, ay)
+            if max_idx >= len(self.joy_state.axes):
+                self.joy_state.axes.extend([0.0] * (max_idx + 1 - len(self.joy_state.axes)))
+            dx = (logical_pos.x() - cx) / max(1e-6, r)
+            dy = (logical_pos.y() - cy) / max(1e-6, r)
+            mag = (dx * dx + dy * dy) ** 0.5
+            if mag > 1.0:
+                dx /= mag
+                dy /= mag
+            self.joy_state.axes[ax] = float(max(-1.0, min(1.0, dx)))
+            self.joy_state.axes[ay] = float(max(-1.0, min(1.0, -dy)))
+            self.publish_current_state()
+            self.update()
+            return True
+
+        return False
+
+    def release_overlay_click_publish(self, logical_pos):
+        if self.edit_mode:
+            return False
+        if not self.publish_click_mode_enabled():
+            return False
+
+        item = self.active_overlay_control
+        if item is None:
+            return False
+
+        changed = False
+        if item.get("type") == "button":
+            idx = int(item.get("index", 0))
+            if 0 <= idx < len(self.joy_state.buttons):
+                self.joy_state.buttons[idx] = 0
+                changed = True
+
+        self.active_overlay_control = None
+        self.active_overlay_kind = None
+
+        if changed:
+            self.publish_current_state()
+            self.update()
+            return True
+        return False
+
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.RightButton:
             if self.edit_mode and self.edit_dialog is not None and self.edit_dialog.isVisible():
@@ -805,6 +1031,10 @@ class OverlayWindow(QtWidgets.QWidget):
             return
 
         logical_pos = self.screen_to_logical(event.localPos())
+        self.active_overlay_control = None
+        self.active_overlay_kind = None
+        if self.handle_overlay_click_publish(logical_pos, "left"):
+            return
         item = self.hit_test(logical_pos) if self.edit_mode else None
         self.selected_item = item
         if self.edit_dialog is not None:
@@ -825,6 +1055,11 @@ class OverlayWindow(QtWidgets.QWidget):
         self.request_repaint()
 
     def mouseMoveEvent(self, event):
+        logical_pos = self.screen_to_logical(event.localPos())
+        if (event.buttons() & QtCore.Qt.LeftButton) and self.publish_click_mode_enabled() and not self.edit_mode:
+            if self.continue_overlay_click_publish(logical_pos):
+                return
+
         if self.dragging_item is not None:
             logical_pos = self.screen_to_logical(event.localPos())
             self.dragging_item["x"] = round(logical_pos.x() - self.drag_offset_logical.x(), 1)
@@ -839,8 +1074,29 @@ class OverlayWindow(QtWidgets.QWidget):
             self.move(event.globalPos() - self.window_drag_offset)
             self.request_repaint()
 
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton and self.publish_click_mode_enabled() and not self.edit_mode:
+            logical_pos = self.screen_to_logical(event.localPos())
+            item = self.hit_test(logical_pos)
+            if item is not None and item.get("type") in ("axis_bar", "stick"):
+                self.active_overlay_control = None
+                self.active_overlay_kind = None
+                if self.reset_overlay_control_value(item):
+                    event.accept()
+                    return
+        super().mouseDoubleClickEvent(event)
+
     def mouseReleaseEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
+            logical_pos = self.screen_to_logical(event.localPos())
+            if self.release_overlay_click_publish(logical_pos):
+                self.dragging_item = None
+                self.dragging_window = False
+                self.unsetCursor()
+                return
+            self.active_overlay_control = None
+            self.active_overlay_kind = None
             self.dragging_item = None
             self.dragging_window = False
             if self.edit_mode:
@@ -1127,8 +1383,9 @@ def main():
     joy_state = JoyState()
     bridge = RosJoyBridge(topic_name)
     bridge.joy_msg.connect(joy_state.update_from_msg)
+    joy_publisher = RosJoyPublisher(topic_name)
 
-    win = OverlayWindow(cfg_mgr, joy_state)
+    win = OverlayWindow(cfg_mgr, joy_state, joy_publisher=joy_publisher)
     win.show()
 
     def handle_sigint(*_args):
