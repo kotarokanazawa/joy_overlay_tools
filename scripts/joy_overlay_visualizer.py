@@ -157,9 +157,13 @@ class JoyState(QtCore.QObject):
         super().__init__()
         self.axes = []
         self.buttons = []
+        self.prev_axes = []
+        self.prev_buttons = []
 
     @QtCore.pyqtSlot(object)
     def update_from_msg(self, msg):
+        self.prev_axes = list(self.axes)
+        self.prev_buttons = list(self.buttons)
         self.axes = list(msg.axes)
         self.buttons = list(msg.buttons)
         self.changed.emit()
@@ -234,6 +238,7 @@ class ColorButton(QtWidgets.QPushButton):
 
 class ItemEditorPanel(QtWidgets.QWidget):
     item_changed = QtCore.pyqtSignal()
+    assign_requested = QtCore.pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -278,10 +283,31 @@ class ItemEditorPanel(QtWidgets.QWidget):
         self.form.addRow("Y", self.y_spin)
 
         self.radius_spin = QtWidgets.QDoubleSpinBox()
+        self.invert_x_check = QtWidgets.QCheckBox()
+        self.invert_y_check = QtWidgets.QCheckBox()
         self.radius_spin.setRange(1, 1000)
         self.radius_spin.setDecimals(1)
         self.radius_spin.valueChanged.connect(self.apply)
+        self.invert_x_check.toggled.connect(self.apply)
+        self.invert_y_check.toggled.connect(self.apply)
         self.form.addRow("半径", self.radius_spin)
+        self.form.addRow("左右反転", self.invert_x_check)
+        self.form.addRow("上下反転", self.invert_y_check)
+
+        self.assign_button_btn = QtWidgets.QPushButton("Assign Button")
+        self.assign_axis_btn = QtWidgets.QPushButton("Assign Axis")
+        self.assign_stick_x_btn = QtWidgets.QPushButton("Assign Stick X")
+        self.assign_stick_y_btn = QtWidgets.QPushButton("Assign Stick Y")
+        self.assign_status = QtWidgets.QLabel("")
+        self.assign_button_btn.clicked.connect(lambda: self.assign_requested.emit("button"))
+        self.assign_axis_btn.clicked.connect(lambda: self.assign_requested.emit("axis"))
+        self.assign_stick_x_btn.clicked.connect(lambda: self.assign_requested.emit("stick_x"))
+        self.assign_stick_y_btn.clicked.connect(lambda: self.assign_requested.emit("stick_y"))
+        self.form.addRow("割当", self.assign_button_btn)
+        self.form.addRow("割当", self.assign_axis_btn)
+        self.form.addRow("割当", self.assign_stick_x_btn)
+        self.form.addRow("割当", self.assign_stick_y_btn)
+        self.form.addRow("状態", self.assign_status)
 
         self.knob_radius_spin = QtWidgets.QDoubleSpinBox()
         self.knob_radius_spin.setRange(1, 1000)
@@ -329,6 +355,9 @@ class ItemEditorPanel(QtWidgets.QWidget):
         if label is not None:
             label.setVisible(visible)
 
+    def set_assign_status(self, text):
+        self.assign_status.setText(text)
+
     def set_item(self, item):
         self._updating = True
         self.current_item = item
@@ -354,6 +383,8 @@ class ItemEditorPanel(QtWidgets.QWidget):
         self.x_spin.blockSignals(True)
         self.y_spin.blockSignals(True)
         self.radius_spin.blockSignals(True)
+        self.invert_x_check.blockSignals(True)
+        self.invert_y_check.blockSignals(True)
         self.knob_radius_spin.blockSignals(True)
         self.width_spin.blockSignals(True)
         self.height_spin.blockSignals(True)
@@ -367,6 +398,8 @@ class ItemEditorPanel(QtWidgets.QWidget):
         self.x_spin.setValue(float(item.get("x", 0)))
         self.y_spin.setValue(float(item.get("y", 0)))
         self.radius_spin.setValue(float(item.get("radius", 20)))
+        self.invert_x_check.setChecked(bool(item.get("invert_x", False)))
+        self.invert_y_check.setChecked(bool(item.get("invert_y", False)))
         self.knob_radius_spin.setValue(float(item.get("knob_radius", 12)))
         self.width_spin.setValue(float(item.get("width", 120)))
         self.height_spin.setValue(float(item.get("height", 16)))
@@ -386,6 +419,8 @@ class ItemEditorPanel(QtWidgets.QWidget):
         self.x_spin.blockSignals(False)
         self.y_spin.blockSignals(False)
         self.radius_spin.blockSignals(False)
+        self.invert_x_check.blockSignals(False)
+        self.invert_y_check.blockSignals(False)
         self.knob_radius_spin.blockSignals(False)
         self.width_spin.blockSignals(False)
         self.height_spin.blockSignals(False)
@@ -397,9 +432,18 @@ class ItemEditorPanel(QtWidgets.QWidget):
         self.set_row_visible(self.axis_x_spin, t == "stick")
         self.set_row_visible(self.axis_y_spin, t == "stick")
         self.set_row_visible(self.radius_spin, t in ("button", "stick"))
+        self.set_row_visible(self.invert_x_check, t == "stick")
+        self.set_row_visible(self.invert_y_check, t == "stick")
         self.set_row_visible(self.knob_radius_spin, t == "stick")
         self.set_row_visible(self.width_spin, t == "axis_bar")
         self.set_row_visible(self.height_spin, t == "axis_bar")
+        self.set_row_visible(self.assign_button_btn, t == "button")
+        self.set_row_visible(self.assign_axis_btn, t == "axis_bar")
+        self.set_row_visible(self.assign_stick_x_btn, t == "stick")
+        self.set_row_visible(self.assign_stick_y_btn, t == "stick")
+        self.set_row_visible(self.assign_status, t in ("button", "axis_bar", "stick"))
+        if t not in ("button", "axis_bar", "stick"):
+            self.assign_status.setText("")
         self._updating = False
 
     def apply(self, *args):
@@ -428,6 +472,8 @@ class ItemEditorPanel(QtWidgets.QWidget):
             item["axis_x"] = self.axis_x_spin.value()
             item["axis_y"] = self.axis_y_spin.value()
             item["radius"] = self.radius_spin.value()
+            item["invert_x"] = self.invert_x_check.isChecked()
+            item["invert_y"] = self.invert_y_check.isChecked()
             item["knob_radius"] = self.knob_radius_spin.value()
             item["idle_color"] = self.idle_color_btn.color()
             item["active_color"] = self.active_color_btn.color()
@@ -475,6 +521,11 @@ class GlobalEditorPanel(QtWidgets.QWidget):
         self.publish_click_check.setChecked(bool(self.config.get("interaction", {}).get("publish_on_overlay_click", False)))
         self.publish_click_check.toggled.connect(self.on_interaction_change)
         form.addRow("クリックでPublish", self.publish_click_check)
+
+        self.hold_axis_stick_check = QtWidgets.QCheckBox()
+        self.hold_axis_stick_check.setChecked(bool(self.config.get("interaction", {}).get("hold_axis_and_stick_on_release", False)))
+        self.hold_axis_stick_check.toggled.connect(self.on_interaction_change)
+        form.addRow("Axis/Stick保持", self.hold_axis_stick_check)
 
     def on_change(self, *args):
         self.config["style"]["global_scale"] = self.scale_spin.value()
@@ -539,6 +590,7 @@ class EditDialog(QtWidgets.QDialog):
 
         self.item_panel = ItemEditorPanel()
         self.item_panel.item_changed.connect(self.overlay.request_repaint)
+        self.item_panel.assign_requested.connect(self.request_assign_for_current_item)
         root.addWidget(self.item_panel)
 
         action_row = QtWidgets.QHBoxLayout()
@@ -602,9 +654,11 @@ class EditDialog(QtWidgets.QDialog):
         if 0 <= row < len(items):
             self.overlay.selected_item = items[row]
             self.item_panel.set_item(items[row])
+            self.item_panel.set_assign_status(self.overlay.assignment_status_text(items[row]))
         else:
             self.overlay.selected_item = None
             self.item_panel.set_item(None)
+            self.item_panel.set_assign_status("")
         self.overlay.request_repaint()
 
     def add_button(self):
@@ -655,6 +709,12 @@ class EditDialog(QtWidgets.QDialog):
         self.item_panel.set_item(None)
         self.overlay.request_repaint()
 
+    def request_assign_for_current_item(self, assign_kind):
+        if self.overlay.selected_item is None:
+            return
+        self.overlay.start_assignment(self.overlay.selected_item, assign_kind)
+        self.item_panel.set_assign_status(self.overlay.assignment_status_text())
+
     def save(self):
         self.overlay.save_runtime_geometry_to_config()
         self.cfg_mgr.save()
@@ -679,6 +739,8 @@ class OverlayWindow(QtWidgets.QWidget):
         self.window_drag_offset = QtCore.QPoint(0, 0)
         self.active_overlay_control = None
         self.active_overlay_kind = None
+        self.pending_assignment_item = None
+        self.pending_assignment_kind = None
         self.edit_dialog = None
         self.edit_mode = False
 
@@ -753,6 +815,9 @@ class OverlayWindow(QtWidgets.QWidget):
 
     def handle_joy_changed(self):
         self.dynamic_expand_items()
+        self.try_resolve_assignment()
+        if self.edit_dialog is not None:
+            self.edit_dialog.item_panel.set_assign_status(self.assignment_status_text())
         self.update()
 
     def dynamic_expand_items(self):
@@ -800,8 +865,93 @@ class OverlayWindow(QtWidgets.QWidget):
     def on_config_saved(self):
         rospy.loginfo("Joy overlay config saved: %s", self.cfg_mgr.path)
 
+    def start_assignment(self, item, assign_kind):
+        self.pending_assignment_item = item
+        self.pending_assignment_kind = assign_kind
+        self.request_repaint()
+
+    def clear_assignment(self):
+        self.pending_assignment_item = None
+        self.pending_assignment_kind = None
+        if self.edit_dialog is not None:
+            self.edit_dialog.item_panel.set_assign_status(self.assignment_status_text())
+        self.request_repaint()
+
+    def assignment_status_text(self, item=None):
+        target = item if item is not None else self.selected_item
+        if self.pending_assignment_item is None or self.pending_assignment_kind is None:
+            return ""
+        if target is self.pending_assignment_item:
+            labels = {
+                "button": "実機ボタン待機中",
+                "axis": "実機axis待機中",
+                "stick_x": "実機stick X待機中",
+                "stick_y": "実機stick Y待機中",
+            }
+            return labels.get(self.pending_assignment_kind, "割当待機中")
+        return ""
+
+    def try_resolve_assignment(self):
+        if self.pending_assignment_item is None or self.pending_assignment_kind is None:
+            return False
+
+        item = self.pending_assignment_item
+        kind = self.pending_assignment_kind
+        assigned = False
+
+        if kind == "button":
+            n = max(len(self.joy_state.buttons), len(self.joy_state.prev_buttons))
+            for i in range(n):
+                prev = self.joy_state.prev_buttons[i] if i < len(self.joy_state.prev_buttons) else 0
+                cur = self.joy_state.buttons[i] if i < len(self.joy_state.buttons) else 0
+                if cur and not prev:
+                    item["index"] = i
+                    assigned = True
+                    break
+        else:
+            n = max(len(self.joy_state.axes), len(self.joy_state.prev_axes))
+            best_i = None
+            best_delta = 0.0
+            for i in range(n):
+                prev = self.joy_state.prev_axes[i] if i < len(self.joy_state.prev_axes) else 0.0
+                cur = self.joy_state.axes[i] if i < len(self.joy_state.axes) else 0.0
+                delta = abs(cur - prev)
+                score = max(delta, abs(cur))
+                if score > best_delta and score > 0.35:
+                    best_delta = score
+                    best_i = i
+            if best_i is not None:
+                if kind == "axis":
+                    item["index"] = best_i
+                elif kind == "stick_x":
+                    item["axis_x"] = best_i
+                elif kind == "stick_y":
+                    item["axis_y"] = best_i
+                assigned = True
+
+        if assigned:
+            self.pending_assignment_item = None
+            self.pending_assignment_kind = None
+            if self.edit_dialog is not None:
+                self.edit_dialog.item_panel.set_item(item)
+                self.edit_dialog.item_panel.set_assign_status("")
+                self.edit_dialog.refresh_list()
+            self.request_repaint()
+            return True
+        return False
+
     def publish_click_mode_enabled(self):
         return bool(self.config.get("interaction", {}).get("publish_on_overlay_click", False))
+
+    def hold_axis_and_stick_on_release_enabled(self):
+        return bool(self.config.get("interaction", {}).get("hold_axis_and_stick_on_release", False))
+
+    def window_drag_allowed(self, event):
+        if self.edit_mode:
+            return True
+        if self.publish_click_mode_enabled():
+            return bool(event.modifiers() & QtCore.Qt.ShiftModifier)
+        return True
 
     def publish_current_state(self):
         if self.joy_publisher is not None:
@@ -810,6 +960,8 @@ class OverlayWindow(QtWidgets.QWidget):
     def close_editor(self, close_dialog=True):
         was_edit_mode = self.edit_mode
         self.edit_mode = False
+        self.pending_assignment_item = None
+        self.pending_assignment_kind = None
         self.dragging_item = None
         self.dragging_window = False
         self.selected_item = None
@@ -928,6 +1080,8 @@ class OverlayWindow(QtWidgets.QWidget):
             if mag > 1.0:
                 dx /= mag
                 dy /= mag
+            if item.get("invert_x", False): dx = -dx
+            if item.get("invert_y", False): dy = -dy
             self.joy_state.axes[ax] = float(max(-1.0, min(1.0, dx)))
             self.joy_state.axes[ay] = float(max(-1.0, min(1.0, -dy)))
             self.active_overlay_control = item
@@ -985,6 +1139,8 @@ class OverlayWindow(QtWidgets.QWidget):
             if mag > 1.0:
                 dx /= mag
                 dy /= mag
+            if item.get("invert_x", False): dx = -dx
+            if item.get("invert_y", False): dy = -dy
             self.joy_state.axes[ax] = float(max(-1.0, min(1.0, dx)))
             self.joy_state.axes[ay] = float(max(-1.0, min(1.0, -dy)))
             self.publish_current_state()
@@ -1009,6 +1165,23 @@ class OverlayWindow(QtWidgets.QWidget):
             if 0 <= idx < len(self.joy_state.buttons):
                 self.joy_state.buttons[idx] = 0
                 changed = True
+        elif item.get("type") == "axis_bar":
+            if not self.hold_axis_and_stick_on_release_enabled():
+                idx = int(item.get("index", 0))
+                if 0 <= idx < len(self.joy_state.axes) and self.joy_state.axes[idx] != 0.0:
+                    self.joy_state.axes[idx] = 0.0
+                    changed = True
+        elif item.get("type") == "stick":
+            if not self.hold_axis_and_stick_on_release_enabled():
+                ax = int(item.get("axis_x", 0))
+                ay = int(item.get("axis_y", 1))
+                max_idx = max(ax, ay)
+                if max_idx >= len(self.joy_state.axes):
+                    self.joy_state.axes.extend([0.0] * (max_idx + 1 - len(self.joy_state.axes)))
+                if self.joy_state.axes[ax] != 0.0 or self.joy_state.axes[ay] != 0.0:
+                    self.joy_state.axes[ax] = 0.0
+                    self.joy_state.axes[ay] = 0.0
+                    changed = True
 
         self.active_overlay_control = None
         self.active_overlay_kind = None
@@ -1033,13 +1206,15 @@ class OverlayWindow(QtWidgets.QWidget):
         logical_pos = self.screen_to_logical(event.localPos())
         self.active_overlay_control = None
         self.active_overlay_kind = None
+
         if self.handle_overlay_click_publish(logical_pos, "left"):
             return
-        item = self.hit_test(logical_pos) if self.edit_mode else None
-        self.selected_item = item
+
+        item = self.hit_test(logical_pos)
+        self.selected_item = item if self.edit_mode else None
         if self.edit_dialog is not None:
             self.edit_dialog.refresh_list()
-            self.edit_dialog.item_panel.set_item(item)
+            self.edit_dialog.item_panel.set_item(self.selected_item)
 
         if self.edit_mode and item is not None:
             self.dragging_item = item
@@ -1048,11 +1223,19 @@ class OverlayWindow(QtWidgets.QWidget):
                 logical_pos.y() - float(item["y"]),
             )
             self.setCursor(QtCore.Qt.ClosedHandCursor)
-        else:
+            self.request_repaint()
+            return
+
+        if self.window_drag_allowed(event):
             self.dragging_window = True
             self.window_drag_offset = event.globalPos() - self.frameGeometry().topLeft()
             self.setCursor(QtCore.Qt.SizeAllCursor)
-        self.request_repaint()
+            self.request_repaint()
+            return
+
+        self.dragging_window = False
+        self.dragging_item = None
+        self.unsetCursor()
 
     def mouseMoveEvent(self, event):
         logical_pos = self.screen_to_logical(event.localPos())
@@ -1237,14 +1420,13 @@ class OverlayWindow(QtWidgets.QWidget):
             if not item.get("visible", True):
                 continue
             idx = int(item.get("index", 0))
-            if idx >= len(self.joy_state.buttons):
-                continue
             pressed = bool(self.get_button_value(idx))
             radius = float(item.get("radius", 26))
             center = QtCore.QPointF(float(item["x"]), float(item["y"]))
             fill = self.qcolor(item.get("pressed_color" if pressed else "idle_color"))
             painter.setBrush(QtGui.QBrush(fill))
-            pen = QtGui.QPen(sel if item is self.selected_item else outline, lw + (1 if item is self.selected_item else 0))
+            highlight_color = QtGui.QColor("#ff4040") if item is self.pending_assignment_item else (sel if item is self.selected_item else outline)
+            pen = QtGui.QPen(highlight_color, lw + (1 if item is self.selected_item or item is self.pending_assignment_item else 0))
             painter.setPen(pen)
             painter.drawEllipse(center, radius, radius)
 
@@ -1265,8 +1447,6 @@ class OverlayWindow(QtWidgets.QWidget):
             if not item.get("visible", True):
                 continue
             idx = int(item.get("index", 0))
-            if idx >= len(self.joy_state.axes):
-                continue
             val = max(-1.0, min(1.0, float(self.get_axis_value(idx))))
             w = float(item.get("width", 180))
             h = float(item.get("height", 18))
@@ -1274,7 +1454,8 @@ class OverlayWindow(QtWidgets.QWidget):
             y = float(item["y"])
             orientation = str(item.get("orientation", "horizontal")).lower()
 
-            painter.setPen(QtGui.QPen(sel if item is self.selected_item else outline, lw))
+            highlight_color = QtGui.QColor("#ff4040") if item is self.pending_assignment_item else (sel if item is self.selected_item else outline)
+            painter.setPen(QtGui.QPen(highlight_color, lw + (1 if item is self.pending_assignment_item else 0)))
             painter.setBrush(QtGui.QBrush(self.qcolor(item.get("idle_color"), "#444444")))
 
             if orientation == "vertical":
@@ -1338,6 +1519,10 @@ class OverlayWindow(QtWidgets.QWidget):
             ay = int(item.get("axis_y", 1))
             vx = max(-1.0, min(1.0, float(self.get_axis_value(ax))))
             vy_raw = max(-1.0, min(1.0, float(self.get_axis_value(ay))))
+            if item.get("invert_x", False):
+                vx = -vx
+            if item.get("invert_y", False):
+                vy_raw = -vy_raw
             vy = -vy_raw
 
             r = float(item.get("radius", 56))
@@ -1349,7 +1534,8 @@ class OverlayWindow(QtWidgets.QWidget):
             mag = min(1.0, math.sqrt(vx * vx + vy_raw * vy_raw))
 
             painter.setBrush(QtGui.QBrush(self.qcolor(item.get("idle_color"), "#444444")))
-            painter.setPen(QtGui.QPen(sel if item is self.selected_item else outline, lw))
+            highlight_color = QtGui.QColor("#ff4040") if item is self.pending_assignment_item else (sel if item is self.selected_item else outline)
+            painter.setPen(QtGui.QPen(highlight_color, lw + (1 if item is self.pending_assignment_item else 0)))
             painter.drawEllipse(center, r, r)
 
             painter.setPen(QtGui.QPen(outline, 1))
