@@ -8,12 +8,16 @@ ROS1 用の `sensor_msgs/Joy` ツール集です。
   - 既存の `Joy` トピックを透過オーバレイ表示
 - `virtual_joy_gui.py`
   - Joy デバイスが無いときに GUI から `Joy` を publish
+- `joy_overlay_tools/JoyOverlayDisplay`
+  - RViz の Display plugin として `Joy` トピックを RViz 画面内に overlay 表示
 
 ## 依存
 
 ```bash
-sudo apt install ros-noetic-rospy ros-noetic-sensor-msgs python3-pyqt5 python3-yaml
+sudo apt install ros-noetic-rospy ros-noetic-sensor-msgs ros-noetic-rviz python3-pyqt5 python3-yaml
 ```
+
+RViz Display plugin 版は RViz/OGRE の overlay として描画します。
 
 ## ビルド
 
@@ -56,6 +60,35 @@ roslaunch joy_overlay_tools virtual_joy_gui.launch joy_topic:=/joy_virtual
 roslaunch joy_overlay_tools virtual_joy_with_overlay.launch joy_topic:=/joy_virtual
 ```
 
+## 4. RViz Display plugin 版
+
+RViz の Displays で `Add` を押し、`joy_overlay_tools/JoyOverlay` を追加します。
+別ウィンドウではなく、RViz の render panel 内に overlay として表示されます。
+
+主な Properties:
+
+- `Joy Topic`: subscribe する `sensor_msgs/Joy` トピック。既定は `/joy`
+- `Left`, `Top`: overlay の表示位置
+- `Width`, `Height`: overlay のサイズ
+- `Max Buttons`, `Max Axes`: 表示する button / axis の最大数
+- `Timeout`: Joy 受信が止まったと判断する秒数
+- `Background Color`, `Text Color`, `Accent Color`: overlay の配色
+
+この版は RViz 内に HUD 表示するための軽量版です。PyQt 版の Edit モードやクリック publish は
+`joy_overlay_visualizer.py` 側に残しています。
+
+既存の Python/PyQt overlay と同じ見た目を使いたい場合は，RViz の Tools から
+`joy_overlay_tools/OpenPythonJoyOverlay` を追加してクリックします。これは RViz 内描画ではなく，
+既存の `joy_overlay_visualizer.py` を別 overlay ウィンドウとして起動します。
+
+Display 一覧に出ない場合は，RViz を起動しているシェルで workspace を source し直してから
+RViz を再起動してください。
+
+```bash
+source /home/kotaro/ws_imax/devel/setup.bash
+rospack plugins --attrib=plugin rviz | grep joy_overlay_tools
+```
+
 ## 主なパラメータ
 
 ### virtual_joy_gui.py
@@ -70,6 +103,11 @@ roslaunch joy_overlay_tools virtual_joy_with_overlay.launch joy_topic:=/joy_virt
 
 - `~joy_topic` : subscribe する Joy トピック
 - `~config_path` : overlay 設定 YAML
+
+### JoyOverlayDisplay
+
+- RViz Display として `joy_overlay_tools/JoyOverlay` を追加
+- Properties から topic・位置・サイズ・表示数・色を設定
 
 ## 設定ファイル
 

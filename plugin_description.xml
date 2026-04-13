@@ -1,0 +1,12 @@
+<library path="lib/libjoy_overlay_tools">
+  <class name="joy_overlay_tools/JoyOverlay"
+         type="joy_overlay_tools::JoyOverlayDisplay"
+         base_class_type="rviz::Display">
+    <description>RViz overlay display for sensor_msgs/Joy.</description>
+  </class>
+  <class name="joy_overlay_tools/OpenPythonJoyOverlay"
+         type="joy_overlay_tools::OpenPythonJoyOverlayTool"
+         base_class_type="rviz::Tool">
+    <description>Launch the existing PyQt joy overlay visualizer.</description>
+  </class>
+</library>
